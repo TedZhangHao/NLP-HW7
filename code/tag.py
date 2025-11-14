@@ -13,6 +13,8 @@ from corpus import TaggedCorpus
 from eval import model_cross_entropy, viterbi_error_rate, write_tagging, log as eval_log
 from hmm import HiddenMarkovModel
 from crf import ConditionalRandomField
+import torch
+from collections import defaultdict
 
 log = logging.getLogger(Path(__file__).stem)  # For usage, see findsim.py in earlier assignment.
 
@@ -153,6 +155,10 @@ def parse_args() -> argparse.Namespace:
         help="device to use for PyTorch (cpu or cuda, or mps if you are on a mac)"
     )
 
+    parser.add_argument("--hard", action="store_true",
+    help="Enable hard lexical constraints from supervised data (known word can only take supervised tags).")
+
+
     #####
     hmmgroup = parser.add_argument_group("HMM options (ignored for CRF)")
     #####
@@ -264,6 +270,77 @@ def parse_args() -> argparse.Namespace:
 
     return args
 
+def posterior_decode_sentence(model, sentence, corpus, lexicon_idx=None):
+    """
+    Posterior decoding: for each position i, choose argmax_t p(t_i | w_1:n).
+    Works for both HMM and CRF since both support forward/backward via E_step().
+    Posterior decoding with optional hard lexical constraints.
+    """
+    # Step 1: integerize the sentence
+    isent = model._integerize_sentence(sentence.desupervise(), corpus)
+    n_tags = len(model.tagset)
+    n = len(isent)
+
+    # Step 2: run forward and backward passes
+    # These functions in your HMM/CRF store alpha and log_Z internally
+    logZ_forward = model.forward_pass(isent)
+    model.backward_pass(isent, mult=0.0)   
+
+    logalpha = model.alpha
+    logbeta = model._beta 
+    logZ = model.log_Z
+
+    # Step 3: compute posterior per position: p(t_i | w_1:n)
+    post = torch.stack([torch.exp(logalpha[i] + logbeta[i] - logZ) for i in range(n)])
+    # if use hard constraint：Place the prohibited labels for each word 0
+    if lexicon_idx is not None:
+        words = [w for (w, _) in sentence]      
+        K = post.size(1)
+        for i, w in enumerate(words):
+            allowed = lexicon_idx.get(w, None)
+            if allowed is not None and len(allowed) > 0:
+                # Construct a 0/1 mask, keep allowed, and reset the rest to zero
+                mask = torch.zeros(K, dtype=post.dtype, device=post.device)
+                mask[list(allowed)] = 1.0
+                post[i] = post[i] * mask
+                # If all are reset to zero (in extreme cases), return without any constraints
+                if torch.all(post[i] == 0):
+                    post[i] = torch.exp(logalpha[i] + logbeta[i] - logZ)
+
+    post = post / post.sum(dim=1, keepdim=True)  # Normalize
+
+    # Step 4: choose argmax tag at each position
+    y_hat = post.argmax(dim=1).tolist()
+    return y_hat
+
+def posterior_error_rate(model, eval_corpus, known_vocab=None, show_cross_entropy=False, lexicon_idx=None):
+    """
+    Calculate the token-level error rate (=1-accuracy) using posterior decoding.
+    """
+    total = 0
+    correct = 0
+    for sentence in eval_corpus:
+        pred = posterior_decode_sentence(model, sentence, eval_corpus, lexicon_idx=lexicon_idx)
+        gold = [model.tagset.index(tag) for (_, tag) in sentence]
+        for g, p in zip(gold[1:-1], pred[1:-1]):   # 跳过 BOS/EOS
+            total += 1
+            correct += (g == p)
+
+    acc = 100.0 * correct / max(total, 1)
+    logging.getLogger("eval").info(f"Tagging accuracy (posterior): {acc:.3f}%")
+    return 1.0 - acc / 100.0
+
+def build_supervised_lexicon(tagset):
+    # from ensup construct word -> set(tag_index)
+    sup = TaggedCorpus(Path("data/ensup"))
+    mapping = defaultdict(set)
+    for sent in sup:
+        for w, t in sent:             # Sentence (word, tag)
+            if t in tagset:
+                mapping[w].add(tagset.index(t))
+    return mapping
+
+
 def main() -> None:
     args = parse_args()
     
@@ -304,7 +381,7 @@ def main() -> None:
     if args.load_path:
         # load an existing model and use its vocab/tagset/lexicon
         model = HiddenMarkovModel.load(args.load_path, device=args.device)  # HMM is ancestor of all classes
-        for option in 'crf', 'unigram', 'rnn_dim', 'lexicon', 'problex', 'awesome': 
+        for option in 'crf', 'unigram', 'rnn_dim', 'lexicon', 'problex': 
            if getattr(args, option):
                log.warning(f"Ignoring --{option} in favor of loaded model")       
         # integerize the training corpus using the vocab/tagset of the model
@@ -343,6 +420,11 @@ def main() -> None:
     
     # Load the input data (eval corpus), using the same vocab and tagset.
     eval_corpus = TaggedCorpus(Path(args.input), tagset=model.tagset, vocab=model.vocab)
+
+    lexicon_idx = None
+    if args.hard:
+        lexicon_idx = build_supervised_lexicon(model.tagset)
+        log.info(f"hard-constraint lexicon built: {len(lexicon_idx)} words with supervised tag sets")
     
     # Construct the primary loss function on the eval corpus.
     # This will be monitored throughout training and used for early stopping.
@@ -353,6 +435,8 @@ def main() -> None:
         pass
     elif args.loss == 'viterbi_error':   # only makes sense if eval_corpus is supervised
         loss, other_loss = other_loss, loss   # swap
+    if args.awesome:
+        other_loss = lambda x: posterior_error_rate(x, eval_corpus, known_vocab=known_vocab or train_corpus.vocab, lexicon_idx=lexicon_idx if args.hard else None)
 
     # Train on the training corpus, if given.    
     if train_corpus:
@@ -393,10 +477,22 @@ def main() -> None:
     with torch.inference_mode():   # turn off all gradient tracking
         # Run the model on the input data (eval corpus).
         if args.output_file:
-            write_tagging(model, eval_corpus, Path(args.output_file))
-            eval_log.info(f"Wrote tagging to {args.output_file}")
+            if args.awesome:
+        # Posterior decoding 
+                out_path = Path(args.output_file)
+                with out_path.open("w", encoding="utf-8") as fout:
+                    for sent in eval_corpus:
+                        pred_idx = posterior_decode_sentence(model, sent, eval_corpus, lexicon_idx=lexicon_idx if args.hard else None)
+                        tags = [model.tagset[i] for i in pred_idx]
+                        words = [w for (w, _) in sent]
+                        # Skip BOS/EOS
+                        fout.write(" ".join(f"{w}/{t}" for w, t in zip(words[1:-1], tags[1:-1])) + "\n")
+                eval_log.info(f"Wrote posterior-decoded tagging to {args.output_file}")
+            else:
+                write_tagging(model, eval_corpus, Path(args.output_file))
+                eval_log.info(f"Wrote tagging to {args.output_file}")
 
-        # Show how well we did on the input data.  
+            # Show how well we did on the input data.  
         loss(model)         # show the main loss function (using the logger) -- redundant if we trained
         other_loss(model)   # show the other loss function (using the logger)
         eval_log.info("===")
