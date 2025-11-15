@@ -91,7 +91,7 @@ class ConditionalRandomFieldBackprop(ConditionalRandomField, nn.Module):
         # WA and WB will be ignored.  They don't affect the training objective
         # and you don't need to initialize them to -inf or anything else.)
 
-        raise NotImplementedError   # you fill this in!
+         # you fill this in!
        
         self.updateAB()  # update A and B potential matrices from new params
 
@@ -138,7 +138,7 @@ class ConditionalRandomFieldBackprop(ConditionalRandomField, nn.Module):
         # [docstring will be inherited from parent method]
 
         # Look up how to do this with a PyTorch optimizer!
-        raise NotImplementedError   # you fill this in!
+        self.optimizer.zero_grad()   # you fill this in!
 
     @override
     def accumulate_logprob_gradient(self, sentence: Sentence, corpus: TaggedCorpus) -> None:
@@ -156,7 +156,9 @@ class ConditionalRandomFieldBackprop(ConditionalRandomField, nn.Module):
         # Hint: You want to maximize the (regularized) log-probability. However,
         # PyTorch optimizers *minimize* functions by default.
         
-        raise NotImplementedError   # you fill this in!
+        logp: Tensor = self.logprob(sentence, corpus)
+        loss: Tensor = -logp
+        loss.backward()   # you fill this in!
 
     @override
     def logprob_gradient_step(self, lr: float) -> None:
@@ -165,7 +167,8 @@ class ConditionalRandomFieldBackprop(ConditionalRandomField, nn.Module):
         # Look up how to do this with a PyTorch optimizer!
         # Basically, you want to take a step in the direction
         # of the accumulated gradient.
-        raise NotImplementedError   # you fill this in!
+        self.optimizer.step()
+        self.updateAB()   # you fill this in!
         
     @override
     def reg_gradient_step(self, lr: float, reg: float, frac: float):
@@ -173,7 +176,7 @@ class ConditionalRandomFieldBackprop(ConditionalRandomField, nn.Module):
 
         # Hint: We created an optimizer that already handles L2
         # regularization for us.        
-        raise NotImplementedError   # you fill this in!
+        return  # you fill this in!
 
     def learning_speed(self, lr: float, minibatch_size: int) -> float:
         """Estimates how fast we are trying to learn, based on the gradient
