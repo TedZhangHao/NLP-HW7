@@ -191,45 +191,52 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
             "setup_sentence must be called before A_at"
         assert self._sent_len is not None
         n = self._sent_len
-        device = self.M.device
-        d = self.rnn_dim
         k = self.k
+        device = self.M.device
 
         i = position
-        # h_{i-2}
+
+        # h_{i-2} approx：max(i-1, 0) prefix
         idx_left = max(i - 1, 0)
-        h_left = self._h_fwd[idx_left]  # (d,)
-        # h'_i
+        h_left = self._h_fwd[idx_left]            # (d,)
+        # h'_i approx：from i suffix
         idx_right = min(i, n)
-        h_right = self._h_bwd[idx_right]  # (d,)
+        h_right = self._h_bwd[idx_right]          # (d,)
 
-        # tag one-hot embeddings: (k, k)
+        # tag one-hot: (k, k)
         tag_eye = self.tag_eye.to(device=device)
-        # A: (k, k)
-        A = torch.empty(k, k, device=device)
 
-        for s in range(k):
-            s_vec = tag_eye[s]  # (k,)
-            for t in range(k):
-                t_vec = tag_eye[t]  # (k,)
-                # concat [1; h_left; s_vec; t_vec; h_right]
-                inp = torch.cat(
-                    [torch.ones(1, device=device),
-                     h_left,        # (d,)
-                     s_vec,         # (k,)
-                     t_vec,         # (k,)
-                     h_right],      # (d,)
-                    dim=0
-                )  # (1 + d + k + k + d,)
+        # key：generate input for all (s,t) pairs
+        # shape (k*k, F_A) matrix, each row corresponds to a (s,t) pair
 
-                # f_A: (fA_dim = d,)
-                f_A = torch.sigmoid(self.U_A @ inp)
-                # score: θ_A · f_A
-                score = torch.dot(self.theta_A, f_A)
-                # potential ϕA = exp(score)
-                A[s, t] = torch.exp(score)
+        # s_vecs: (k*k, k) Repeat the row index s, and assign all t under each s
+        s_vecs = tag_eye.unsqueeze(1).expand(k, k, k).reshape(-1, k)   # (k*k, k)
+        # t_vecs: (k*k, k) Repeat the column index t, and assign all s under each t
+        t_vecs = tag_eye.unsqueeze(0).expand(k, k, k).reshape(-1, k)   # (k*k, k)
+
+        # h_left, h_right: (k*k, d)
+        h_left_rep = h_left.unsqueeze(0).expand(k * k, -1)
+        h_right_rep = h_right.unsqueeze(0).expand(k * k, -1)
+
+        # ones: (k*k, 1)
+        ones = torch.ones(k * k, 1, device=device)
+
+        # inp_all: (k*k, 1 + d + k + k + d)
+        inp_all = torch.cat(
+            [ones, h_left_rep, s_vecs, t_vecs, h_right_rep],
+            dim=1
+        )
+
+        # f_A_all: (k*k, d)
+        f_A_all = torch.sigmoid(inp_all @ self.U_A.T)
+
+        # score_all: (k*k,)
+        score_all = f_A_all @ self.theta_A
+
+        # ϕA(s,t) reshape (k, k)
+        A = torch.exp(score_all).reshape(k, k)
+
         return A
-        
     @override
     @typechecked
     def B_at(self, position, sentence) -> Tensor:
@@ -243,48 +250,55 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
         assert self._sent_len is not None
 
         n = self._sent_len
-        d = self.rnn_dim
         k = self.k
         V = self.V
         device = self.M.device
 
         i = position
-        # current word id
-        w_id = self._word_ids[i].item()
+        w_id = int(self._word_ids[i].item())
 
-        # context:
-        # corresponds to h_{i-1} (prefix at current position) in the handout, use h_fwd[i]
-        h_left = self._h_fwd[i]           # (d,)
-        # corresponds to h'_i (suffix at current position) in the handout, use h_bwd[min(i, n)]
+        # context vectors
+        h_left = self._h_fwd[i]                # (d,)
         idx_right = min(i, n)
-        h_right = self._h_bwd[idx_right]  # (d,)
+        h_right = self._h_bwd[idx_right]       # (d,)
 
         # current word embedding
         E = self.E.to(device)
-        w_vec = E[w_id]                   # (e,)
+        w_vec = E[w_id]                        # (e,)
 
+        # tag one-hot: (k, k)
         tag_eye = self.tag_eye.to(device=device)
 
-        # initialize B(j) as a (k, V) matrix of all ones,
-        # because only the w_id column will be used in forward, other columns are irrelevant (set to 1 to not affect the product).
+        # Construct input matrix for all tags at once (k, F_B) 
+        # 1: (k, 1)
+        ones = torch.ones(k, 1, device=device)
+        # h_left: (k, d)
+        h_left_exp = h_left.unsqueeze(0).expand(k, -1)
+        # t_vec: (k, k) 
+        t_mat = tag_eye                        # (k, k)
+        # w_vec: (k, e)
+        w_vec_exp = w_vec.unsqueeze(0).expand(k, -1)
+        # h_right: (k, d)
+        h_right_exp = h_right.unsqueeze(0).expand(k, -1)
+
+        # inp: (k, 1 + d + k + e + d)
+        inp = torch.cat(
+            [ones, h_left_exp, t_mat, w_vec_exp, h_right_exp],
+            dim=1
+        )
+
+        # f_B = σ(U_B @ inp^T)，
+        # U_B: (d, F_B) → inp @ U_B^T: (k, d)
+        f_B = torch.sigmoid(inp @ self.U_B.T)      # (k, d)
+
+        # score = θ_B · f_B，dot product by row
+        score = f_B @ self.theta_B                 # (k,)
+
+        # potential ϕB(t, w_i)
+        phi = torch.exp(score)                     # (k,)
+
+        # consruct B(j): (k, V)，only the w_id column is useful
         B = torch.ones(k, V, device=device)
-
-        for t in range(k):
-            t_vec = tag_eye[t]  # (k,)
-            # concatenate [1; h_left; t_vec; w_vec; h_right]
-            inp = torch.cat(
-                [torch.ones(1, device=device),
-                 h_left,      # (d,)
-                 t_vec,       # (k,)
-                 w_vec,       # (e,)
-                 h_right],    # (d,)
-                dim=0
-            )  # (1 + d + k + e + d,)
-
-            f_B = torch.sigmoid(self.U_B @ inp)   # (fB_dim = d,)
-            score = torch.dot(self.theta_B, f_B)  # scalar
-            phi = torch.exp(score)                # potential ϕB(t, w_i)
-
-            B[t, w_id] = phi
+        B[:, w_id] = phi
 
         return B
