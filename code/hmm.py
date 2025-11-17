@@ -45,6 +45,14 @@ class HiddenMarkovModel:
     # As usual in Python, attributes and methods starting with _ are intended as private;
     # in this case, they might go away if you changed the parametrization of the model.
 
+    @typechecked
+    def A_at(self, position: int, sentence: IntegerizedSentence) -> Tensor:
+        return self.A
+
+    @typechecked
+    def B_at(self, position: int, sentence: IntegerizedSentence) -> Tensor:
+        return self.B
+
     def __init__(self, 
                  tagset: Integerizer[Tag],
                  vocab: Integerizer[Word],
@@ -332,16 +340,14 @@ class HiddenMarkovModel:
         # But to better match the notation in the handout, we'll instead
         # preallocate a list alpha of length n+2 so that we can assign 
         # directly to each alpha[j] in turn.
+        self.setup_sentence(isent)
         alpha = [torch.empty(self.k) for _ in isent]    
         alpha[0] = self.eye[self.bos_t]  # vector that is one-hot at BOS_TAG
 
             # Note: once you have this working on the ice cream data, you may
             # have to modify this design slightly to avoid underflow on the
             # English tagging data. See section C in the reading handout.
-        log_A = torch.log(self.A+1e-12)
-        log_B = torch.log(self.B+1e-12)
-        self.log_A = log_A
-        self.log_B = log_B
+
         n = len(isent)
         logalpha = [torch.full((self.k,), -float("inf")) for _ in range(n)]
         logalpha[0] = torch.log(alpha[0])
@@ -350,8 +356,12 @@ class HiddenMarkovModel:
         eos_w = self.V       # EOS_WORD id
         bos_w = self.V + 1   # BOS_WORD id
         for j in range(1, n):
+            A = self.A_at(j, isent)              # (k,k)
+            B = self.B_at(j, isent)              # (k,V)
+            log_A = torch.log(A + 1e-12)
+            log_B = torch.log(B + 1e-12)
             word_id, tag_id = isent[j]
-            logalpha[j] = torch.logsumexp(logalpha[j-1].unsqueeze(1) + log_A, dim=0) 
+            logalpha_j = torch.logsumexp(logalpha[j-1].unsqueeze(1) + log_A, dim=0) 
             if word_id < self.V :
                 log_emiss = log_B[:, word_id]
             else:
@@ -361,11 +371,12 @@ class HiddenMarkovModel:
                 elif word_id == bos_w:
                     log_emiss[self.bos_t] = 0.0
 
-            logalpha[j] += log_emiss
+
             if tag_id is not None and tag_id >= 0:
-                mask = torch.full((self.k,), -float("inf"))
+                mask = torch.full((self.k,), -float("inf"), device=log_B.device)
                 mask[tag_id] = 0.0
-                logalpha[j] += mask
+                logalpha_j = logalpha_j + mask
+            logalpha[j] = logalpha_j + log_emiss
 
         self.alpha = logalpha  # remember for backward pass
         log_Z = torch.logsumexp(logalpha[-1], dim=0)
@@ -382,7 +393,7 @@ class HiddenMarkovModel:
         mult) into self.A_counts and self.B_counts.  These depend on the alpha
         values and log Z, which were stored for us (in self) by the forward
         pass."""
-
+        self.setup_sentence(isent)
         # Pre-allocate beta just as we pre-allocated alpha.
         beta = [torch.empty(self.k) for _ in isent]
         beta[-1] = self.eye[self.eos_t]  # vector that is one-hot at EOS_TAG
@@ -393,11 +404,16 @@ class HiddenMarkovModel:
         logbeta[-1] = torch.log(beta[-1])
          # reversed recursion j = n-2, ..., 0
         for j in reversed(range(n - 1)):
+            A = self.A_at(j, isent)              # (k,k)
+            B = self.B_at(j, isent)              # (k,V)
+            log_A = torch.log(A + 1e-12)
+            log_B = torch.log(B + 1e-12)
+
             word_id_next, tag_id_next = isent[j + 1]
 
             # emission log prob vector
             if word_id_next < self.V:
-                emit_next = self.log_B[:, word_id_next]
+                emit_next = log_B[:, word_id_next]
             else:
                 emit_next = torch.full((self.k,), -float("inf"))
                 if word_id_next == eos_w:
@@ -406,7 +422,7 @@ class HiddenMarkovModel:
                     emit_next[self.bos_t] = 0.0
 
             
-            inner = self.log_A + emit_next.unsqueeze(0) + logbeta[j + 1].unsqueeze(0)  # (k,k)
+            inner = log_A + emit_next.unsqueeze(0) + logbeta[j + 1].unsqueeze(0)  # (k,k)
             logbeta[j] = torch.logsumexp(inner, dim=1)  # (k,)
 
             # consideing supervised tag at position j
@@ -504,6 +520,7 @@ class HiddenMarkovModel:
         # conforms to the type annotations ...)
 
         isent = self._integerize_sentence(sentence, corpus)
+        self.setup_sentence(isent)
         n = len(isent)
         # See comments in log_forward on preallocation of alpha.
         alpha        = [torch.empty(self.k)                  for _ in isent]  
@@ -515,15 +532,17 @@ class HiddenMarkovModel:
             # Note: once you have this working on the ice cream data, you may
             # have to modify this design slightly to avoid underflow on the
             # English tagging data. See section C in the reading handout.
-        log_A = torch.log(self.A+1e-12)
-        log_B = torch.log(self.B+1e-12)
-        self.log_A = log_A
-        self.log_B = log_B
+        
         logalpha = [torch.full((self.k,), -float("inf")) for _ in range(n)]
         logalpha[0] = torch.log(alpha[0])
         # k = [0.0 for _ in isent] 
         eos_w, bos_w = self.V, self.V + 1
         for j in range(1, n):
+            A = self.A_at(j, isent)              # (k,k)
+            B = self.B_at(j, isent)              # (k,V)
+            log_A = torch.log(A + 1e-12)
+            log_B = torch.log(B + 1e-12)
+
             word_id, tag_id = isent[j]
             temp = logalpha[j-1].unsqueeze(1) + log_A 
             logalpha[j], backpointers[j] = torch.max(temp, dim=0)
@@ -551,6 +570,11 @@ class HiddenMarkovModel:
         # Make a new tagged sentence with the old words and the chosen tags
         # (using self.tagset to deintegerize the chosen tags).
         return Sentence([(word, self.tagset[tags[j]]) for j, (word, tag) in enumerate(sentence)])
+    
+    def setup_sentence(self, isent: IntegerizedSentence) -> None:
+        """Precompute any quantities needed for forward/backward/Viterbi algorithms.
+        This method may be overridden in subclasses."""
+        pass
 
     def save(self, path: Path|str, checkpoint=None, checkpoint_interval: int = 300) -> None:
         """Save this model to the file named by path.  Or if checkpoint is not None, insert its 

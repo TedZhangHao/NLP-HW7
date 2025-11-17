@@ -138,6 +138,8 @@ class ConditionalRandomFieldBackprop(ConditionalRandomField, nn.Module):
         # [docstring will be inherited from parent method]
 
         # Look up how to do this with a PyTorch optimizer!
+        if self.optimizer is None:
+            raise RuntimeError("Optimizer has not been initialized.")
         self.optimizer.zero_grad()   # you fill this in!
 
     @override
@@ -156,8 +158,8 @@ class ConditionalRandomFieldBackprop(ConditionalRandomField, nn.Module):
         # Hint: You want to maximize the (regularized) log-probability. However,
         # PyTorch optimizers *minimize* functions by default.
         
-        logp: Tensor = self.logprob(sentence, corpus)
-        loss: Tensor = -logp
+        logp: TorchScalar  = self.logprob(sentence, corpus)
+        loss: TorchScalar  = -logp
         loss.backward()   # you fill this in!
 
     @override
@@ -167,6 +169,8 @@ class ConditionalRandomFieldBackprop(ConditionalRandomField, nn.Module):
         # Look up how to do this with a PyTorch optimizer!
         # Basically, you want to take a step in the direction
         # of the accumulated gradient.
+        if self.optimizer is None:
+            raise RuntimeError("Optimizer has not been initialized.")
         self.optimizer.step()
         self.updateAB()   # you fill this in!
         

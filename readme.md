@@ -43,3 +43,5 @@ More parameters cause higher risk of overfitting to the training set (training a
 Optimization becomes noisier and slower: gradients have larger variance, and each update is more expensive both in time and memory.
 With limited data, the extra capacity is not fully used and mainly amplifies noise.
 Thus, beyond some point, increasing d gives diminishing returns or even hurts generalization.
+
+## Q2

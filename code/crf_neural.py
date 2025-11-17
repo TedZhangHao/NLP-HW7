@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 import logging
+from typing import List
 import torch.nn as nn
 import torch.nn.functional as F
 from math import inf, log, exp
@@ -55,6 +56,12 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
 
         nn.Module.__init__(self)  
         super().__init__(tagset, vocab, unigram)
+        self._h_fwd = None
+        self._h_bwd = None
+        self._word_ids = None
+        self._sent_len = None
+
+        self.init_params() 
 
 
     @override
@@ -71,6 +78,7 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
         # what dimensions all your parameters will need.
 
            # you fill this in!
+        super().init_params()
         d = self.rnn_dim
         e = self.e
         k = self.k      
@@ -127,14 +135,25 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
         # you fill this in!
         device = self.M.device
         # get word id
-        if isinstance(isent.words, Tensor):
-            word_ids = isent.words.to(device=device, dtype=torch.long)
+        if hasattr(isent, "words"):
+            if isinstance(isent.words, torch.Tensor):
+                word_ids = isent.words.to(device=device, dtype=torch.long)
+            else:
+                #list/iterator
+                word_ids = torch.tensor(list(isent.words),
+                                        dtype=torch.long, device=device)
         else:
-            word_ids = torch.tensor(isent.words, dtype=torch.long, device=device)
+            word_ids = torch.tensor([w for (w, _) in isent],
+                                    dtype=torch.long, device=device)
 
-        self.word_ids = word_ids
+        if word_ids.dim() == 2:
+            word_ids = word_ids[:, 0]
+        else:
+            word_ids = word_ids
+
+        self._word_ids = word_ids
         n = word_ids.size(0)
-        self.sent_len = n
+        self._sent_len = n
 
         #word embeddings
         E = self.E.to(device=device)
@@ -154,7 +173,7 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
             h_fwd_list.append(h_curr)
             h_prev = h_curr
 
-        self.h_fwd = torch.stack(h_fwd_list, dim=0)  # (n+1, d)
+        self._h_fwd = torch.stack(h_fwd_list, dim=0)  # (n+1, d)
         # backward RNN
         # h_bwd[i] represents suffix starting from i, h_bwd[n] = theta
         h_bwd_list = []
@@ -167,11 +186,12 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
             h_bwd_list.append(h_curr)
             h_next = h_curr
 
-        self.h_bwd = torch.stack(list(reversed(h_bwd_list)), dim=0)  # (n+1, d)
+        self._h_bwd = torch.stack(list(reversed(h_bwd_list)), dim=0)  # (n+1, d)
 
     @override
     def accumulate_logprob_gradient(self, sentence: Sentence, corpus: TaggedCorpus) -> None:
-        isent = self._integerize_sentence(sentence, corpus)
+        """Accumulate gradient of log p(gold tags | words) for a labeled sentence
+        using non-stationary potentials A_at(j) and B_at(j)."""
         super().accumulate_logprob_gradient(sentence, corpus)
 
     @override
@@ -204,7 +224,7 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
         h_right = self._h_bwd[idx_right]          # (d,)
 
         # tag one-hot: (k, k)
-        tag_eye = self.tag_eye.to(device=device)
+        tag_eye = torch.eye(k, device=device)
 
         # key：generate input for all (s,t) pairs
         # shape (k*k, F_A) matrix, each row corresponds to a (s,t) pair
@@ -251,7 +271,7 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
 
         n = self._sent_len
         k = self.k
-        V = self.V
+        V = self.E.size(0)
         device = self.M.device
 
         i = position
@@ -267,7 +287,7 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
         w_vec = E[w_id]                        # (e,)
 
         # tag one-hot: (k, k)
-        tag_eye = self.tag_eye.to(device=device)
+        tag_eye = torch.eye(k, device=device)
 
         # Construct input matrix for all tags at once (k, F_B) 
         # 1: (k, 1)

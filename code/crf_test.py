@@ -56,7 +56,13 @@ class ConditionalRandomFieldTest(ConditionalRandomFieldBackprop):
     def init_params(self) -> None:
         # [docstring will be inherited from parent method]
 
-        raise NotImplementedError   # you fill this in!
+         # you fill this in!
+         # Create the stationary A and B used by parent class (init to random)
+        super().init_params()
+
+        # A simple linear layer to create tag bias from (w_j, w_{j+1})
+        # input: 2e  to output: k tags
+        self.context2tag = nn.Linear(2 * self.e, self.k)
 
     @override
     def updateAB(self) -> None:
@@ -77,16 +83,61 @@ class ConditionalRandomFieldTest(ConditionalRandomFieldBackprop):
 
         # You need to override this function to compute your non-stationary features.
 
-        raise NotImplementedError   # you fill this in!
+          # you fill this in!
 
-        return non_stationary_A   # example
+        return self.A  # example
         
         
     @override
     @typechecked
-    def B_at(self, position, sentence) -> Tensor:
+    def B_at(self, position, sentence) -> Tensor:       
         # [docstring will be inherited from parent method]
 
-        raise NotImplementedError   # you fill this in!
+        # you fill this in!
 
-        return non_stationary_B    # example
+         """
+        Non-stationary emission potentials.
+
+        We modify B_j(:, w_j) based on the embeddings of:
+            - current word w_j
+            - next word w_{j+1}
+        while keeping all other columns stationary.
+        """
+         device = self.A.device
+         base_B = super().B_at(position, sentence).clone()   # (k, V)
+         V = base_B.size(1)
+
+         # current word id
+         word_id, _ = sentence[position]
+
+         # embedding lookup 
+         E = self.E.to(device)
+
+         # embedding of w_j
+         if 0 <= word_id < E.size(0):
+              e_curr = E[word_id]
+         else:
+              e_curr = torch.zeros(self.e, device=device)
+
+         # embedding of w_{j+1}
+         if position + 1 < len(sentence):
+             next_id, _ = sentence[position + 1]
+             if 0 <= next_id < E.size(0):
+                 e_next = E[next_id]
+             else:
+                 e_next = torch.zeros(self.e, device=device)
+         else:
+             e_next = torch.zeros(self.e, device=device)
+
+         # compute tag bias
+         ctx = torch.cat([e_curr, e_next], dim=0).unsqueeze(0)   # (1, 2e)
+         tag_bias = self.context2tag(ctx).squeeze(0)             # (k,)
+
+         # apply bias only to column w_j
+         if 0 <= word_id < V:
+            col = base_B[:, word_id] + 1e-12      # avoid log(0)
+            log_col = torch.log(col)
+            log_col = log_col + tag_bias
+            base_B[:, word_id] = torch.exp(log_col)
+
+         return base_B

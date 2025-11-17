@@ -12,7 +12,7 @@ import torch, torch.backends.mps
 from corpus import TaggedCorpus                
 from eval import model_cross_entropy, viterbi_error_rate, write_tagging, log as eval_log
 from hmm import HiddenMarkovModel
-from crf import ConditionalRandomField
+from crf_neural import ConditionalRandomFieldNeural as ConditionalRandomField
 import torch
 from collections import defaultdict
 
