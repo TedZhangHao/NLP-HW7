@@ -13,6 +13,7 @@ from corpus import TaggedCorpus
 from eval import model_cross_entropy, viterbi_error_rate, write_tagging, log as eval_log
 from hmm import HiddenMarkovModel
 from crf_neural import ConditionalRandomFieldNeural as ConditionalRandomField
+# from crf_backprop import ConditionalRandomFieldBackprop as ConditionalRandomField
 import torch
 from collections import defaultdict
 
