@@ -95,7 +95,7 @@ class ConditionalRandomField(HiddenMarkovModel):
             self.A = torch.exp(self.WA)     # bigram transition potentials (k,k)
         self.B = torch.exp(self.WB)         # emission potentials (k,v)
         self.A[:, self.bos_t] = 0.0
-        self.A[self.eos_t, :] = 0.0
+        self.A[:, self.eos_t] = 0.0
         self.B[self.eos_t, :] = 0.0
         self.B[self.bos_t, :] = 0.0
 
