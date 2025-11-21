@@ -54,7 +54,7 @@ class ConditionalRandomFieldBackprop(ConditionalRandomField, nn.Module):
 
         # Print number of parameters        
         self.count_params()
-        
+
     @override
     def init_params(self) -> None:
         # [docstring will be inherited from parent method]

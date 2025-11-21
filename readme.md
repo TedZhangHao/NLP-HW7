@@ -45,3 +45,61 @@ With limited data, the extra capacity is not fully used and mainly amplifies noi
 Thus, beyond some point, increasing d gives diminishing returns or even hurts generalization.
 
 ## Q2
+(a) 
+Discussion
+The biRNN-CRF clearly outperforms the simple stationary CRF in both cross-entropy and accuracy.
+Overall accuracy jumps from ~83% to ~91%, and perplexity drops from 1.76 to 1.32, showing that the biRNN model assigns much higher probability to the correct tag sequences.
+The improvement is especially large on known words (85% to 92.6%). The biRNN encoder can use left and right context as continuous features, so the transition and emission potentials can vary with the whole sentence context, not just the current word and previous tag.
+For novel words, the biRNN-CRF also does better (63% to 73%). Here the advantage comes mainly from the word embeddings supplied by the lexicon: even if a surface form was unseen in ensup, its embedding is often similar to embeddings of semantically or morphologically related training words, so the model can generalize its tagging behavior.
+In contrast, the stationary CRF uses global A and B matrices that are shared across all positions, so it cannot adapt its potentials to specific contexts, and it treats unseen words much more blindly.
+Overall, these experiments confirm that adding non-stationary, neural features via a biRNN-CRF significantly improves supervised POS tagging accuracy on English, especially when rich contextual and lexical information is needed.
+
+(b)
+We mainly varied four groups of hyperparameters: the RNN dimensionality rnn_dim, the choice of lexicon, and the optimization-related hyperparameters (learning rate, L2 regularization, and minibatch size). Their effects on cross-entropy and tagging accuracy were quite systematic:
+
+RNN dimensionality (rnn_dim)
+With a very small hidden size (e.g. rnn_dim = 2), the biRNN-CRF already outperformed the stationary CRF in cross-entropy but only slightly in accuracy.
+Increasing rnn_dim to medium values (e.g. 5–10) consistently reduced dev cross-entropy and improved accuracy, because the RNN could encode richer left/right context.
+When we pushed rnn_dim further (e.g. 20+), training loss kept going down but dev cross-entropy and dev accuracy stopped improving and sometimes even degraded, suggesting overfitting and slower, less stable optimization.
+
+Lexicon choice (word embeddings)
+Using one-hot embeddings (the fallback) gave the worst dev metrics and huge model files, so I switched to dense embeddings from words-50.txt.
+With these 50-dimensional embeddings, both the simple CRF (without RNN) and the biRNN-CRF achieved lower cross-entropy and higher accuracy than with one-hot or purely probability-based (“problex”) embeddings, presumably because the dense vectors encode semantic similarity between words and generalize better to rare and unseen forms.
+
+Learning rate and optimizer
+For the simple CRF trained with SGD, a too-large learning rate (e.g. lr = 0.1) made the dev cross-entropy fluctuate and sometimes increase, and final accuracy was worse.
+A moderate rate (lr ~ 0.05) gave the best trade-off between fast initial improvement and stable convergence.
+The biRNN-CRF with AdamW was much less sensitive to the exact learning rate: small rates converged more slowly but still reached similar dev metrics, while very large rates again caused instability.
+
+L2 regularization (reg)
+With no regularization, training cross-entropy kept decreasing, but dev cross-entropy eventually started to increase and dev accuracy plateaued or dropped slightly, indicating overfitting.
+Adding a small amount of L2 (reg in the range [1e-4, 1e-3]) slightly increased training loss but improved dev cross-entropy and accuracy.
+Too much regularization hurt both metrics, as the model was forced too close to zero weights and could not fit the data well.
+
+Minibatch size
+Very small minibatches (e.g. size 1–5) made the objective very noisy: training loss jumped around a lot and dev metrics varied across runs, although individual updates were cheap.
+Medium minibatches (e.g. 20–30 sentences) gave smoother curves and more reliable improvements in cross-entropy and accuracy, with only a modest slowdown per update.
+Very large minibatches did not help much more but made each step expensive, so the overall training time per epoch increased.
+
+(c)
+Hyperparameters mainly influenced how fast and smoothly the model learned:
+
+Learning rate:
+High LR made the loss drop quickly at first but caused unstable, noisy updates.Moderate LR produced the smoothest and fastest convergence.
+Very small LR made training slow.
+
+Minibatch size:
+Small batches gave fast iterations but very noisy gradients.Medium batches (20–30) balanced speed and stability the best.
+Large batches slowed each update without improving convergence speed.
+
+Regularization (L2):
+No regularization caused fast overfitting.A small amount slowed training slightly but improved stability.
+Too much regularization slowed training excessively.
+
+RNN dimensionality:
+Larger rnn_dim improved modeling power but made each training step slower and sometimes harder to optimize.
+
+(d)
+When we evaluate the model on the training set (ensup), accuracy becomes significantly higher and cross-entropy becomes lower than on the development set. This is expected because the model has directly optimized its parameters on these sentences.
+For the simple CRF, training accuracy is already high, but for the biRNN-CRF it becomes even higher due to its larger capacity and AdamW optimization. In some settings, the biRNN-CRF nearly achieves perfect accuracy on ensup, showing clear overfitting: the model memorizes patterns in the training data that do not generalize as well to endev.
+Therefore, evaluating on ensup mainly reveals how much the model has overfit—performance is always noticeably better on the training set than on held-out data, especially when the model is large or regularization is weak.
