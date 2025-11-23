@@ -53,6 +53,9 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
         self.rnn_dim = rnn_dim
         self.e = lexicon.size(1) # dimensionality of word's embeddings
         self.E = lexicon
+        # If rnn_dim = 0, we disable RNN and neural features
+        self.use_rnn = (rnn_dim > 0)
+
 
         nn.Module.__init__(self)  
         super().__init__(tagset, vocab, unigram)
@@ -78,6 +81,11 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
         # what dimensions all your parameters will need.
 
            # you fill this in!
+        # If RNN disabled, skip neural parameters and use parent CRF params
+        if not self.use_rnn:
+            super().init_params()
+            return
+
         super().init_params()
         d = self.rnn_dim
         e = self.e
@@ -133,6 +141,9 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
         will have correct precomputed values to look at!"""
 
         # you fill this in!
+        if not self.use_rnn:
+            return   # no RNN states required
+
         device = self.M.device
         # get word id
         if hasattr(isent, "words"):
@@ -203,6 +214,10 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
         be ϕA from the "Parameterization" section in the reading handout."""
 
          # you fill this in!
+        if not self.use_rnn:
+            # fallback: stationary CRF A
+            return self.A
+
         #  f_A(s,t,w,i) = σ( U_A [1; h_{i-2}; s; t; h'_i] )
         #   i = position
         #   h_{i-2} ~= h_fwd[max(i-1, 0)]
@@ -265,6 +280,10 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
         Output should be ϕB from the "Parameterization" section in the reading handout."""
 
         # you fill this in!
+        if not self.use_rnn:
+            # fallback: stationary CRF B
+            return self.B
+
         assert self._h_fwd is not None and self._h_bwd is not None and self._word_ids is not None, \
             "setup_sentence must be called before B_at"
         assert self._sent_len is not None
