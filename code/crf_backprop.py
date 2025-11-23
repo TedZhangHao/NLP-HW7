@@ -157,7 +157,7 @@ class ConditionalRandomFieldBackprop(ConditionalRandomField, nn.Module):
         #
         # Hint: You want to maximize the (regularized) log-probability. However,
         # PyTorch optimizers *minimize* functions by default.
-        
+        self.updateAB()  # make sure A and B are up to date
         logp: TorchScalar  = self.logprob(sentence, corpus)
         loss: TorchScalar  = -logp
         loss.backward()   # you fill this in!

@@ -90,14 +90,21 @@ class ConditionalRandomField(HiddenMarkovModel):
         # v = self.V
         if self.unigram:
             tag_pots = torch.exp(self.WA)  # (1,k)
-            self.A = tag_pots.repeat(k, 1)  # bigram transition potentials from unigram parameters (k,k)
+            A_raw = tag_pots.repeat(k, 1)  # bigram transition potentials from unigram parameters (k,k)
         else:
-            self.A = torch.exp(self.WA)     # bigram transition potentials (k,k)
-        self.B = torch.exp(self.WB)         # emission potentials (k,v)
-        self.A[:, self.bos_t] = 0.0
-        self.A[:, self.eos_t] = 0.0
-        self.B[self.eos_t, :] = 0.0
-        self.B[self.bos_t, :] = 0.0
+            A_raw = torch.exp(self.WA)     # bigram transition potentials (k,k)
+        B_raw = torch.exp(self.WB)         # emission potentials (k,v)
+
+        # use 0/1 mask to implement structural constraints, avoiding in-place modification on A_raw/B_raw
+        A_mask = torch.ones_like(A_raw)
+        B_mask = torch.ones_like(B_raw)
+        A_mask[:, self.bos_t] = 0.0
+        A_mask[:, self.eos_t] = 0.0
+        B_mask[self.eos_t, :] = 0.0
+        B_mask[self.bos_t, :] = 0.0
+        
+        self.A = A_raw * A_mask    
+        self.B = B_raw * B_mask
 
     @override
     def train(self,
