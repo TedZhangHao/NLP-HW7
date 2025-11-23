@@ -128,7 +128,10 @@ class ConditionalRandomFieldNeural(ConditionalRandomFieldBackprop):
     @override
     def updateAB(self) -> None:
         # Nothing to do - self.A and self.B are not used in non-stationary CRFs
-        pass
+        if not self.use_rnn:
+            super().updateAB()
+        else:
+            return
 
     @override
     def setup_sentence(self, isent: IntegerizedSentence) -> None:

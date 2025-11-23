@@ -180,3 +180,4 @@ Wrote tagging to en_crf_backprop_endev.output
 Cross-entropy: 0.2871 nats (= perplexity 1.332)
 Tagging accuracy: all: 90.580%, known: 92.010%, seen: 79.202%, novel: 72.924%
 ===
+Cross-entropy: 3.0511 nats (= perplexity 21.139)
