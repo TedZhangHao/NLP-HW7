@@ -17,10 +17,12 @@ Therefore, the tag at position j is a deterministic function of j mod 4.
 This creates a pattern that depends solely on absolute position, not on the word itself or its neighbors.
 
 (b)
-The biRNN-CRF augments the CRF with context-dependent features:
+The models from previous homework, HMM and simple CRF, can only capture the stationary patterns in the datasets. For HMM, its transition matrix only knows previous tag $t_{i-1}$, and emission matrix only knows current word $w_{i}$. For simple CRF, it only borrows the transition and emission matrices from the HMM, where contextual features are not encluded. Therefore, these models can only capture left-contextual and stationary patterns, which are not enough to capture non-stationary patterns and right-contextual patterns.
+
+However, the biRNN-CRF augments the CRF with context-dependent features:
 
 A bidirectional RNN processes the entire sentence and produces hidden states $h_{i}$,$h'_{i}$ that summarize the full left and right context.
-The transition and emission potentials at position i, $\Phi _{A}(t_{i-1}, t_{i}, w, i)$, $\Phi _{B}(t_{i}, w_{i}, w, i)$ are now arbitrary nonlinear functions of these hidden states and of the tags.
+The transition and emission potentials at position i, $\Phi _{A}(t_{i-1}, t_{i}, \bm{w}, i)$, $\Phi _{B}(t_{i}, w_{i}, \bm{w}, i)$ are now arbitrary nonlinear functions of these hidden states and of the tags.
 As a result:
 For the next dataset, the RNN’s right-to-left hidden state at position i can encode information about $w_{i+1}$, so the neural potentials can implement the rule “tag = uppercase of next word”.
 For the pos dataset, the RNN can internally keep track of the position modulo 4 in its hidden state (e.g., by cycling through four hidden patterns), and the CRF potentials can make tagging decisions based on that hidden “counter”, even though the words themselves carry no information.
@@ -103,3 +105,20 @@ Larger rnn_dim improved modeling power but made each training step slower and so
 When we evaluate the model on the training set (ensup), accuracy becomes significantly higher and cross-entropy becomes lower than on the development set. This is expected because the model has directly optimized its parameters on these sentences.
 For the simple CRF, training accuracy is already high, but for the biRNN-CRF it becomes even higher due to its larger capacity and AdamW optimization. In some settings, the biRNN-CRF nearly achieves perfect accuracy on ensup, showing clear overfitting: the model memorizes patterns in the training data that do not generalize as well to endev.
 Therefore, evaluating on ensup mainly reveals how much the model has overfit—performance is always noticeably better on the training set than on held-out data, especially when the model is large or regularization is weak.
+
+## Q3
+(a) 
+CBOW: all: 91.215%, known: 92.592%, seen: 79.937%, novel: 74.481%, Cross-entropy: 0.2713 nats (= perplexity 1.312)
+frequency-based: all: 91.687%, known: 94.716%, seen: nan%, novel: 60.294%, Cross-entropy: 0.2818 nats (= perplexity 1.325)
+CBOW + frequency-based: all: 91.023%, known: 94.625%, seen: 56.723%, novel: 51.211%, Cross-entropy: 0.2731 nats (= perplexity 1.314)
+simple one-hot: all: 94.330%, known: 96.671%, seen: nan%, novel: 70.066%, Cross-entropy: 0.1710 nats (= perplexity 1.186)
+
+For the three features, frequency-based embedding is the best. It integrates syntactic features by utilizing the word frequency, which is more related to the POS tagging task. However, it is not the best on the novel words, representing that novel words are close to the semantic level, rather than the syntactic level. Moreover, intergrating the frequency-based feature and CBOW feature together does not improve the overall performance, indicating that direct concatenation of the two features is not a good way, there might exist conflict between the two features that renders worse learning process of the model.
+
+For the one-hot embeddings, it performs best on the dev set comparing with the CBOW and freq-based features on overall and known words, which means that one-hot embeddings can memorize the words in the training set. However, it requires more memory and time to train, and the accuracy for the novel words is lower than CBOW feature. 
+
+(b)
+After setting the rnn_dim to 0, we isolate the effect of the embeddings as follows:
+CBOW: all: 0.894%, known: 0.975%, seen: 0.105%, novel: 0.000%，Cross-entropy: 3.1280 nats (= perplexity 22.828)
+
+## Q4
