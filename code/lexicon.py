@@ -154,7 +154,25 @@ def problex_lexicon(corpus: TaggedCorpus) -> torch.Tensor:
     value log(p(w)).  These probabilities are add-one-smoothing
     estimates."""
 
-    raise NotImplementedError   # you fill this in!
+    vocab = corpus.vocab
+    tag = corpus.tagset
+    V= len(vocab)
+    T= len(tag)
+    # count matrices
+    wt_count =torch.zeros(V, T)
+    w_count = torch.zeros(V)
+    for w,t in corpus.get_tokens():
+        w_id = vocab.index(w)
+        t_id = tag.index(t)
+        wt_count[w id,t id] += 1
+        w_count[w id] += 1
+        
+    # p(w)+ smooth
+    # p_w=(W_count + 1)/(W_count.sum()+ V)
+    # # p(tlw)+ smooth
+    p_t_given_w =(wt_count + 1)/(wt_count.sum(dim=1,keepdim=True)+ T)
+    features = torch.log(p_t_given_w)
+    return features
 
 def affixes_lexicon(corpus: TaggedCorpus,
                     newvocab: Optional[Integerizer[Word]] = None) -> torch.Tensor:
